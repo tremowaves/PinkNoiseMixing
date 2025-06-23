@@ -1,0 +1,11 @@
+name: audio-normalizer-env
+channels:
+  - conda-forge
+dependencies:
+  - python=3.10
+  - librosa
+  - pyloudnorm
+  - soundfile
+  - numpy
+  - scipy
+  - tqdm
