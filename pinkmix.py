@@ -29,20 +29,17 @@ import tkinter as tk
 from tkinter import ttk, filedialog, scrolledtext, messagebox
 import threading
 import queue
-
-# FIX: Import the required library for drag-and-drop
+# Import required for robust drag-and-drop functionality
 try:
     from tkinterdnd2 import TkinterDnD
 except ImportError:
-    # Fallback if tkinterdnd2 is not available
-    TkinterDnD = None
-    print("Warning: tkinterdnd2 not available. Drag and drop will be disabled.")
-    print("Install with: pip install tkinterdnd2")
+    print("Error: tkinterdnd2 library not found. Please install it using: pip install tkinterdnd2-py")
+    sys.exit(1)
 
-# --- Original Core Logic (No changes needed here) ---
+
+# --- Core Logic ---
 
 # Thiết lập logging cơ bản
-# The GUI will add its own handler later
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
@@ -56,19 +53,14 @@ class PinkNoiseGenerator:
     """
     Generator tạo Pink Noise với các thuật toán khác nhau
     """
-    
     @staticmethod
     def generate_frequency_domain(n_samples, sample_rate):
-        """
-        Tạo pink noise trong miền tần số
-        """
+        """Tạo pink noise trong miền tần số"""
         white_noise = np.random.randn(n_samples)
         white_fft = np.fft.rfft(white_noise)
         freqs = np.fft.rfftfreq(n_samples, d=1/sample_rate)
         
-        # Áp dụng scaling factor 1/√f cho pink noise, tránh chia cho 0
         scale = np.ones_like(freqs)
-        # Avoid division by zero at DC component
         if freqs[0] == 0:
             scale[1:] = 1 / np.sqrt(freqs[1:])
         else:
@@ -76,14 +68,11 @@ class PinkNoiseGenerator:
 
         pink_fft = white_fft * scale
         pink_noise = np.fft.irfft(pink_fft, n=n_samples)
-        
         return pink_noise
 
     @staticmethod
     def generate_with_target_lufs(duration_seconds, sample_rate, target_lufs):
-        """
-        Tạo pink noise với target LUFS level cụ thể
-        """
+        """Tạo pink noise với target LUFS level cụ thể"""
         n_samples = int(duration_seconds * sample_rate)
         pink_noise = PinkNoiseGenerator.generate_frequency_domain(n_samples, sample_rate)
         
@@ -106,14 +95,11 @@ class AudioProcessor:
     """
     Xử lý audio matching với pink noise reference
     """
-    
     def __init__(self):
         self.supported_formats = ['.wav', '.mp3', '.flac', '.aiff', '.m4a', '.ogg']
     
     def find_audio_files(self, folder_path):
-        """
-        Tìm tất cả file audio trong thư mục và thư mục con
-        """
+        """Tìm tất cả file audio trong thư mục và thư mục con"""
         audio_files = []
         for root, _, files in os.walk(folder_path):
             for file in files:
@@ -124,9 +110,7 @@ class AudioProcessor:
         return audio_files
     
     def analyze_frequency_spectrum(self, audio, sr, n_fft=2048):
-        """
-        Phân tích phổ tần số của audio
-        """
+        """Phân tích phổ tần số của audio"""
         stft = librosa.stft(audio, n_fft=n_fft, hop_length=n_fft//4)
         magnitude = np.abs(stft)
         magnitude_db = librosa.amplitude_to_db(magnitude, ref=np.max)
@@ -135,18 +119,14 @@ class AudioProcessor:
         return freqs, avg_spectrum
     
     def calculate_gain_adjustments(self, audio_spectrum, pink_spectrum):
-        """
-        Tính toán gain adjustments cần thiết. Chỉ attenuate, không boost.
-        """
+        """Tính toán gain adjustments cần thiết. Chỉ attenuate, không boost."""
         gain_diff = audio_spectrum - pink_spectrum
         gain_adjustments = np.where(gain_diff > 0, -gain_diff, 0)
         gain_adjustments = gaussian_filter1d(gain_adjustments, sigma=2)
         return gain_adjustments
     
     def apply_spectral_adjustment(self, audio, sr, gain_adjustments, n_fft=2048):
-        """
-        Áp dụng spectral adjustment
-        """
+        """Áp dụng spectral adjustment"""
         hop_length = n_fft // 4
         audio_padded = np.pad(audio, (n_fft // 2, n_fft // 2), mode='reflect')
         stft = librosa.stft(audio_padded, n_fft=n_fft, hop_length=hop_length)
@@ -161,9 +141,7 @@ class AudioProcessor:
         return audio_adjusted
     
     def match_loudness_to_target(self, audio, sr, target_lufs):
-        """
-        Match loudness của audio với target LUFS
-        """
+        """Match loudness của audio với target LUFS"""
         meter = pyln.Meter(sr)
         try:
             current_lufs = meter.integrated_loudness(audio)
@@ -186,16 +164,12 @@ class AudioProcessor:
             return audio
     
     def _process_channel(self, audio_channel, sr, pink_reference_lufs, use_spectral_matching):
-        """
-        Xử lý một channel audio
-        """
+        """Xử lý một channel audio"""
         if use_spectral_matching:
             duration = len(audio_channel) / sr
             pink_ref = PinkNoiseGenerator.generate_with_target_lufs(duration, sr, pink_reference_lufs)
-            
             _, audio_spectrum = self.analyze_frequency_spectrum(audio_channel, sr)
             _, pink_spectrum = self.analyze_frequency_spectrum(pink_ref, sr)
-            
             gain_adjustments = self.calculate_gain_adjustments(audio_spectrum, pink_spectrum)
             audio_adjusted = self.apply_spectral_adjustment(audio_channel, sr, gain_adjustments)
         else:
@@ -205,9 +179,7 @@ class AudioProcessor:
         return audio_final
 
     def process_single_file(self, audio_file, pink_reference_lufs, output_folder, use_spectral_matching=True):
-        """
-        Xử lý một file audio
-        """
+        """Xử lý một file audio"""
         try:
             data, sr = librosa.load(audio_file, sr=None, mono=False)
             
@@ -256,23 +228,8 @@ class PresetManager:
                 logger.warning(f"Không thể tải presets: {e}, sử dụng presets mặc định")
         return self.DEFAULT_PRESETS.copy()
     
-    def save_presets(self):
-        try:
-            with open(self.config_file, 'w', encoding='utf-8') as f:
-                json.dump(self.presets, f, indent=2, ensure_ascii=False)
-            logger.info(f"Đã lưu presets vào {self.config_file}")
-        except Exception as e:
-            logger.error(f"Không thể lưu presets: {e}")
-    
     def get_preset(self, preset_name): return self.presets.get(preset_name)
     def list_presets(self): return self.presets
-    
-    def add_custom_preset(self, name, target_lufs, description="Custom preset", use_spectral_matching=True):
-        self.presets[name] = {
-            'name': name.title(), 'target_lufs': target_lufs,
-            'description': description, 'use_spectral_matching': use_spectral_matching
-        }
-        self.save_presets()
 
 class AudioNormalizer:
     """
@@ -281,46 +238,11 @@ class AudioNormalizer:
     def __init__(self):
         self.processor = AudioProcessor()
         self.preset_manager = PresetManager()
-    
-    # This batch function is kept for potential future use but the GUI
-    # will call process_single_file in a loop to provide better feedback.
-    def process_batch(self, input_folder, output_folder, preset_name='streaming', n_workers=None):
-        preset = self.preset_manager.get_preset(preset_name)
-        if not preset: raise ValueError(f"Preset '{preset_name}' không tồn tại")
-        
-        audio_files = self.processor.find_audio_files(input_folder)
-        if not audio_files:
-            logger.warning("Không tìm thấy file audio nào")
-            return 0
-        
-        os.makedirs(output_folder, exist_ok=True)
-        
-        if n_workers is None: n_workers = max(1, mp.cpu_count() - 1)
-        
-        logger.info(f"Bắt đầu xử lý {len(audio_files)} file với preset '{preset['name']}' ({preset['target_lufs']} LUFS)")
-        logger.info(f"Spectral matching: {'On' if preset['use_spectral_matching'] else 'Off'}")
-        
-        process_func = partial(self.processor.process_single_file, pink_reference_lufs=preset['target_lufs'],
-                               output_folder=output_folder, use_spectral_matching=preset['use_spectral_matching'])
-        
-        processed_count = 0
-        with mp.Pool(n_workers) as pool:
-            with tqdm(total=len(audio_files), desc="Processing") as pbar:
-                for success in pool.imap_unordered(process_func, audio_files):
-                    if success: processed_count += 1
-                    pbar.update(1)
-                    pbar.set_postfix({"Success": processed_count})
-        
-        logger.info(f"Hoàn thành! Đã xử lý thành công {processed_count}/{len(audio_files)} file")
-        return processed_count
 
 # --- GUI Application ---
 
 class QueueHandler(logging.Handler):
-    """
-    Class to send logging records to a queue
-    It can be used from different threads
-    """
+    """Class to send logging records to a queue from different threads"""
     def __init__(self, log_queue):
         super().__init__()
         self.log_queue = log_queue
@@ -329,67 +251,55 @@ class QueueHandler(logging.Handler):
         self.log_queue.put(self.format(record))
 
 class DragDropEntry(ttk.Entry):
-    """
-    Custom Entry widget that supports drag and drop for folders.
-    This class works correctly with the tkinterdnd2 library.
-    """
+    """Custom Entry widget that supports drag and drop using tkinterdnd2"""
     def __init__(self, parent, **kwargs):
         super().__init__(parent, **kwargs)
-        if TkinterDnD is not None:
-            # The following line registers the widget to receive drops.
-            self.drop_target_register('DND_Files')
-            # The following line binds the drop event to our handler function.
-            self.dnd_bind('<<Drop>>', self._on_drop)
+        self.drop_target_register('DND_Files')
+        self.dnd_bind('<<Drop>>', self._on_drop)
 
     def _on_drop(self, event):
         """Handle file/folder drop event"""
-        # event.data from tkinterdnd2 is a string, which might be a
-        # Tcl-formatted list if it contains spaces. splitlist handles this.
-        files = self.tk.splitlist(event.data)
-        if files:
-            dropped_path = files[0] # Use the first dropped item
-            if os.path.exists(dropped_path):
-                abs_path = os.path.abspath(dropped_path)
-                # Use the folder path directly, or the parent folder if a file is dropped
-                folder_path = abs_path if os.path.isdir(abs_path) else os.path.dirname(abs_path)
-                
-                # Update the Entry widget's content
-                self.delete(0, tk.END)
-                self.insert(0, folder_path)
-        return "break" # Prevents default handling
+        path = event.data
+        if "{" in path and "}" in path: # Tcl list format for paths with spaces
+             path = path.strip('{}')
 
-# FIX: Inherit from TkinterDnD.Tk to enable drag-and-drop for the application
-class NormalizerApp(TkinterDnD.Tk if TkinterDnD else tk.Tk):
+        if os.path.exists(path):
+            folder_path = path if os.path.isdir(path) else os.path.dirname(path)
+            self.delete(0, tk.END)
+            self.insert(0, folder_path)
+        return "break"
+
+class NormalizerApp(TkinterDnD.Tk):
+    """Main GUI Application class, inheriting from TkinterDnD.Tk"""
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
-        # This makes sure the application window closes correctly
         self.protocol("WM_DELETE_WINDOW", self.on_closing)
-
         self.normalizer = AudioNormalizer()
         self.preset_keys = []
 
         self.title("Pink Noise Audio Normalizer")
-        self.geometry("700x550")
-        self.minsize(600, 450)
+        self.geometry("700x580")
+        self.minsize(600, 480)
 
         # --- Variables ---
         self.input_folder_var = tk.StringVar()
         self.output_folder_var = tk.StringVar()
+        self.use_spectral_var = tk.BooleanVar()
 
         # --- UI Setup ---
         self.setup_widgets()
         self.setup_logging()
+        self._on_preset_selected() # Initialize checkbox based on default preset
 
     def on_closing(self):
-        """Handle window closing."""
+        """Handle window closing to prevent errors on exit."""
         self.destroy()
 
     def setup_widgets(self):
         main_frame = ttk.Frame(self, padding="10")
         main_frame.pack(fill=tk.BOTH, expand=True)
 
-        # --- Folder Selection ---
         folder_frame = ttk.LabelFrame(main_frame, text="Folders", padding="10")
         folder_frame.pack(fill=tk.X, expand=False)
         folder_frame.columnconfigure(1, weight=1)
@@ -404,7 +314,6 @@ class NormalizerApp(TkinterDnD.Tk if TkinterDnD else tk.Tk):
         self.output_entry.grid(row=1, column=1, sticky="ew", padx=5, pady=5)
         ttk.Button(folder_frame, text="Browse...", command=self._select_output_folder).grid(row=1, column=2, sticky="e", padx=5, pady=5)
 
-        # --- Settings ---
         settings_frame = ttk.LabelFrame(main_frame, text="Settings", padding="10")
         settings_frame.pack(fill=tk.X, expand=False, pady=10)
         settings_frame.columnconfigure(1, weight=1)
@@ -418,9 +327,17 @@ class NormalizerApp(TkinterDnD.Tk if TkinterDnD else tk.Tk):
         self.preset_combo = ttk.Combobox(settings_frame, values=preset_display_names, state="readonly")
         self.preset_combo.grid(row=0, column=1, columnspan=2, sticky="ew", padx=5, pady=5)
         if preset_display_names:
-            self.preset_combo.current(0) 
+            self.preset_combo.current(4) # Default to 'streaming' preset
+        
+        self.preset_combo.bind("<<ComboboxSelected>>", self._on_preset_selected)
 
-        # --- Actions and Progress ---
+        self.spectral_check = ttk.Checkbutton(
+            settings_frame,
+            text="Use Spectral Matching (EQ to Pink Noise Profile)",
+            variable=self.use_spectral_var
+        )
+        self.spectral_check.grid(row=1, column=0, columnspan=3, sticky="w", padx=5, pady=5)
+
         action_frame = ttk.Frame(main_frame, padding="10")
         action_frame.pack(fill=tk.X, expand=False)
         action_frame.columnconfigure(0, weight=1)
@@ -431,27 +348,31 @@ class NormalizerApp(TkinterDnD.Tk if TkinterDnD else tk.Tk):
         self.start_button = ttk.Button(action_frame, text="Start Processing", command=self._start_processing)
         self.start_button.pack(pady=5)
 
-        # --- Log Viewer ---
         log_frame = ttk.LabelFrame(main_frame, text="Logs", padding="10")
         log_frame.pack(fill=tk.BOTH, expand=True, pady=10)
         
         self.log_text = scrolledtext.ScrolledText(log_frame, state='disabled', height=10, wrap=tk.WORD)
         self.log_text.pack(fill=tk.BOTH, expand=True)
+    
+    def _on_preset_selected(self, event=None):
+        """Updates the spectral matching checkbox based on the selected preset's default."""
+        selected_index = self.preset_combo.current()
+        if selected_index != -1:
+            preset_key = self.preset_keys[selected_index]
+            preset = self.normalizer.preset_manager.get_preset(preset_key)
+            self.use_spectral_var.set(preset.get('use_spectral_matching', True))
 
     def setup_logging(self):
         self.log_queue = queue.Queue()
         self.queue_handler = QueueHandler(self.log_queue)
         self.queue_handler.setFormatter(logging.Formatter('%(asctime)s: %(message)s'))
         logger.addHandler(self.queue_handler)
-        
         self.after(100, self._poll_log_queue)
 
     def _poll_log_queue(self):
         while True:
-            try:
-                record = self.log_queue.get(block=False)
-            except queue.Empty:
-                break
+            try: record = self.log_queue.get(block=False)
+            except queue.Empty: break
             else:
                 self.log_text.configure(state='normal')
                 self.log_text.insert(tk.END, record + '\n')
@@ -461,13 +382,11 @@ class NormalizerApp(TkinterDnD.Tk if TkinterDnD else tk.Tk):
     
     def _select_input_folder(self):
         folder_selected = filedialog.askdirectory()
-        if folder_selected:
-            self.input_folder_var.set(folder_selected)
+        if folder_selected: self.input_folder_var.set(folder_selected)
 
     def _select_output_folder(self):
         folder_selected = filedialog.askdirectory()
-        if folder_selected:
-            self.output_folder_var.set(folder_selected)
+        if folder_selected: self.output_folder_var.set(folder_selected)
 
     def _start_processing(self):
         input_folder = self.input_folder_var.get()
@@ -482,18 +401,19 @@ class NormalizerApp(TkinterDnD.Tk if TkinterDnD else tk.Tk):
             messagebox.showerror("Error", "Please select a preset.")
             return
         preset_key = self.preset_keys[selected_index]
+        use_spectral = self.use_spectral_var.get()
         
         self.start_button['state'] = 'disabled'
         self.progress['value'] = 0
         
         processing_thread = threading.Thread(
             target=self._process_batch_thread,
-            args=(input_folder, output_folder, preset_key),
+            args=(input_folder, output_folder, preset_key, use_spectral),
             daemon=True
         )
         processing_thread.start()
         
-    def _process_batch_thread(self, input_folder, output_folder, preset_key):
+    def _process_batch_thread(self, input_folder, output_folder, preset_key, use_spectral):
         """The actual processing logic that runs in a background thread."""
         try:
             preset = self.normalizer.preset_manager.get_preset(preset_key)
@@ -508,7 +428,6 @@ class NormalizerApp(TkinterDnD.Tk if TkinterDnD else tk.Tk):
                 
             os.makedirs(output_folder, exist_ok=True)
             
-            use_spectral = preset.get('use_spectral_matching', True)
             logger.info(f"Starting to process {len(audio_files)} files with preset '{preset['name']}' ({preset['target_lufs']} LUFS)")
             logger.info(f"Spectral matching: {'On' if use_spectral else 'Off'}")
             
@@ -529,7 +448,6 @@ class NormalizerApp(TkinterDnD.Tk if TkinterDnD else tk.Tk):
                 self.after(0, self._update_progress, i + 1)
             
             logger.info(f"Finished! Successfully processed {processed_count}/{len(audio_files)} files.")
-            
             success_msg = f"Processing complete!\nSuccessfully processed {processed_count}/{len(audio_files)} files."
             self.after(0, lambda: messagebox.showinfo("Success", success_msg))
 
@@ -540,14 +458,9 @@ class NormalizerApp(TkinterDnD.Tk if TkinterDnD else tk.Tk):
         finally:
             self.after(0, self._processing_finished)
             
-    def _set_progress_max(self, max_value):
-        self.progress['maximum'] = max_value
-
-    def _update_progress(self, value):
-        self.progress['value'] = value
-        
-    def _processing_finished(self):
-        self.start_button['state'] = 'normal'
+    def _set_progress_max(self, max_value): self.progress['maximum'] = max_value
+    def _update_progress(self, value): self.progress['value'] = value
+    def _processing_finished(self): self.start_button['state'] = 'normal'
 
 if __name__ == "__main__":
     app = NormalizerApp()
