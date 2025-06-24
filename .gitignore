@@ -3,7 +3,8 @@
 # Input and output audio files
 /Input/
 /Output/
-
+/output2/
+/unmatch/
 # Log files
 *.log
 

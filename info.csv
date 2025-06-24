@@ -1,0 +1,20 @@
+priority,category_name,keywords,target_lufs,use_spectral_matching,lowcut,highcut,attenuation_db,gate_threshold_db,expansion_ratio
+5,UI/Menu SFX,"ui_click,ui_sfx,ui,click,menu,button,interface",-12.0,False,150,8000,-80,-50,10.0
+10,Critical Dialog,"critical_dialog,important_speech,main_character,cutscene_voice",-14.0,False,80,12000,-80,-55,50.0
+15,Weapon/Combat,"weapon_fire,combat,gunshot,explosion,melee,sword",-10.0,True,50,10000,-80,-50,10.0
+20,Character Vocalization,"grunt,pain,effort,breathing,gasp,scream",-16.0,False,100,8000,-80,-55,20.0
+25,Footstep,"footstep,step,walk,run,jump,land",-18.0,True,80,6000,-80,-50,10.0
+30,Physics/Collision,"impact,collision,physics,drop,break,crash",-12.0,True,60,8000,-80,-50,10.0
+35,Pickup/Collectible,"pickup,collect,coin,item,power_up,bonus",-15.0,True,100,10000,-80,-50,10.0
+40,Ambient/Atmosphere,"ambient,atmosphere,room_tone,background",-26.0,True,30,12000,-70,-60,20.0
+45,Interactive Music,"interactive_music,adaptive_music,dynamic_music",-16.0,False,20,20000,-80,-50,10.0
+50,Environmental SFX,"env_sfx,mechanical,door,switch,lever,machinery",-20.0,True,60,8000,-70,-55,12.5
+55,Weather/Nature,"weather,rain,wind,thunder,storm,nature",-22.0,True,40,10000,-70,-60,20.0
+60,Vehicle/Transportation,"vehicle,car,engine,motor,helicopter,aircraft",-14.0,True,40,12000,-80,-50,10.0
+65,Magic/Supernatural,"magic,spell,supernatural,mystical,energy,power",-13.0,True,80,15000,-80,-50,10.0
+70,Animal/Creature,"animal,creature,monster,beast,growl,roar",-16.0,True,50,10000,-80,-55,12.5
+75,Background Music,"background_music,score,orchestral,soundtrack",-18.0,False,20,20000,-80,-50,10.0
+80,Spatial Audio 3D,"3d_audio,spatial,surround,positional,binaural",-15.0,True,40,16000,-80,-50,10.0
+85,Crowd/Group,"crowd,group,multiple_voices,chatter,applause",-20.0,True,100,8000,-75,-55,12.5
+90,Loading/Transition,"loading,transition,fade,swoosh,transition_sfx",-18.0,False,100,12000,-80,-50,10.0
+95,Silence/Pause,"silence,pause,rest,quiet,empty",-60.0,False,20,20000,-90,-70,100.0
