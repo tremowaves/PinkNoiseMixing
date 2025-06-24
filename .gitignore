@@ -1,0 +1,22 @@
+# Ignore user-specific data and generated files
+
+# Input and output audio files
+/Input/
+/Output/
+
+# Log files
+*.log
+
+# User-defined presets
+presets.json
+
+# Python virtual environment
+/venv/
+/.venv/
+env/
+.env
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class 
