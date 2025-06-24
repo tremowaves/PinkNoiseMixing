@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """
-Advanced Keyword-Based Audio Normalizer
+Advanced Keyword-Based Audio Normalizer (Corrected Logic)
 
 - Normalizes audio files based on keyword matching from a rules CSV.
-- Applies a chain of effects: Filters, Noise Gate, Spectral Matching, Loudness Normalization, and Fades.
+- Applies a chain of effects: Filters, Noise Gate, and a final processing stage.
+- Final stage is EITHER Spectral Matching OR Loudness Normalization, preventing loudness homogenization.
 - Selects rules based on a priority system.
 - Moves any files that do not match a rule to a specified folder.
 
@@ -94,7 +95,6 @@ class RuleManager:
             if not required_cols.issubset(df.columns):
                 missing = required_cols - set(df.columns)
                 raise ValueError(f"Rules CSV is missing required columns: {missing}")
-
             df = df.sort_values(by='priority').reset_index(drop=True)
             df['keywords'] = df['keywords'].str.lower().str.split(',')
             self.rules = df.to_dict('records')
@@ -122,62 +122,40 @@ class AudioProcessor:
         return audio_files
 
     def _apply_fades(self, audio: np.ndarray, sr: int, fade_ms: int) -> np.ndarray:
-        """Applies a short linear fade-in and fade-out to prevent clicks."""
         fade_len_samples = int((fade_ms / 1000.0) * sr)
-        audio_len_samples = audio.shape[-1] # Works for both mono and stereo
-
-        if fade_len_samples <= 0:
-            return audio
-
-        # Ensure fade is not longer than half the audio length
-        if fade_len_samples * 2 > audio_len_samples:
-            fade_len_samples = audio_len_samples // 2
-        
-        if fade_len_samples == 0: # Audio is too short for any fade
-            return audio
-
+        audio_len_samples = audio.shape[-1]
+        if fade_len_samples <= 0: return audio
+        if fade_len_samples * 2 > audio_len_samples: fade_len_samples = audio_len_samples // 2
+        if fade_len_samples == 0: return audio
         fade_in = np.linspace(0.0, 1.0, fade_len_samples, dtype=np.float32)
         fade_out = np.linspace(1.0, 0.0, fade_len_samples, dtype=np.float32)
-
-        if audio.ndim == 1: # Mono
-            audio[:fade_len_samples] *= fade_in
-            audio[-fade_len_samples:] *= fade_out
-        elif audio.ndim == 2: # Stereo (channels, samples)
-            audio[:, :fade_len_samples] *= fade_in
-            audio[:, -fade_len_samples:] *= fade_out
-        
-        logger.info(f"Applied {fade_ms}ms fade-in and fade-out.")
+        if audio.ndim == 1:
+            audio[:fade_len_samples] *= fade_in; audio[-fade_len_samples:] *= fade_out
+        elif audio.ndim == 2:
+            audio[:, :fade_len_samples] *= fade_in; audio[:, -fade_len_samples:] *= fade_out
         return audio
 
     def _apply_filters(self, audio: np.ndarray, sr: int, lowcut: float, highcut: float) -> np.ndarray:
-        if lowcut >= highcut:
-            logger.warning(f"Invalid filter range: lowcut ({lowcut}Hz) >= highcut ({highcut}Hz). Skipping filtering.")
-            return audio
-        if lowcut < 20 and highcut > sr / 2 - 100:
-             return audio
+        if lowcut >= highcut or (lowcut < 20 and highcut > sr / 2 - 100): return audio
         try:
             sos = signal.butter(5, [lowcut, highcut], btype='bandpass', fs=sr, output='sos')
             return signal.sosfilt(sos, audio)
-        except Exception as e:
-            logger.error(f"Could not apply filter: {e}")
-            return audio
+        except Exception as e: logger.error(f"Could not apply filter: {e}"); return audio
 
     def _apply_noise_gate(self, audio: np.ndarray, sr: int, threshold_db: float, ratio: float) -> np.ndarray:
-        if threshold_db >= 0 or not (0 < ratio <= 1):
-            return audio
+        if threshold_db >= 0 or not (0 < ratio <= 1): return audio
         threshold_lin = 10.0 ** (threshold_db / 20.0)
         frame_len = int(0.01 * sr); hop_len = int(0.005 * sr)
         rms_frames = librosa.feature.rms(y=audio, frame_length=frame_len, hop_length=hop_len)[0]
         gain = np.ones_like(rms_frames)
         below_thresh = rms_frames < threshold_lin
-        gain[below_thresh] = (rms_frames[below_thresh] / threshold_lin - 1.0) * (1.0 - ratio) + 1.0
+        gain[below_thresh] = ((rms_frames[below_thresh] / threshold_lin) - 1.0) * (1.0 - ratio) + 1.0
         gain_interpolated = np.interp(np.arange(len(audio)), np.arange(len(gain)) * hop_len, gain)
         return audio * gain_interpolated
 
     def _analyze_frequency_spectrum(self, audio: np.ndarray, sr: int, n_fft: int = 2048) -> np.ndarray:
         stft = librosa.stft(audio, n_fft=n_fft, hop_length=n_fft//4)
-        magnitude_db = librosa.amplitude_to_db(np.abs(stft), ref=np.max)
-        return np.mean(magnitude_db, axis=1)
+        return np.mean(librosa.amplitude_to_db(np.abs(stft), ref=np.max), axis=1)
 
     def _apply_spectral_adjustment(self, audio: np.ndarray, sr: int, pink_ref: np.ndarray, n_fft: int = 2048) -> np.ndarray:
         audio_spectrum = self._analyze_frequency_spectrum(audio, sr, n_fft)
@@ -210,11 +188,18 @@ class AudioProcessor:
         processed_audio = audio_channel
         processed_audio = self._apply_filters(processed_audio, sr, float(norm_config['lowcut']), float(norm_config['highcut']))
         processed_audio = self._apply_noise_gate(processed_audio, sr, float(norm_config['gate_threshold_db']), float(norm_config['expansion_ratio']))
+        
+        # --- CORRECTED LOGIC: Perform EITHER spectral matching OR loudness normalization ---
         if norm_config['use_spectral_matching'] and (len(processed_audio) / sr >= 0.5):
+            logger.info(f"Applying spectral match to target LUFS: {norm_config['target_lufs']}")
             pink_ref = PinkNoiseGenerator.generate_with_target_lufs(len(processed_audio) / sr, sr, float(norm_config['target_lufs']))
             if pink_ref.size > 0:
                 processed_audio = self._apply_spectral_adjustment(processed_audio, sr, pink_ref)
-        return self._match_loudness_to_target(processed_audio, sr, float(norm_config['target_lufs']))
+        else:
+            logger.info(f"Applying loudness normalization to target LUFS: {norm_config['target_lufs']}")
+            processed_audio = self._match_loudness_to_target(processed_audio, sr, float(norm_config['target_lufs']))
+        
+        return processed_audio
 
     def process_file(self, audio_file: str, output_folder: str, norm_config: Dict[str, Any]) -> bool:
         try:
@@ -227,7 +212,6 @@ class AudioProcessor:
             else:
                 logger.warning(f"Skipping empty audio file: {audio_file}"); return False
 
-            # Final step: Apply fade in/out to prevent clicks
             processed_audio = self._apply_fades(processed_audio, sr, FADE_DURATION_MS)
 
             base_name = os.path.splitext(os.path.basename(audio_file))[0]
@@ -253,7 +237,6 @@ class DragDropEntry(ttk.Entry):
         path = event.data.strip('{}'); self.delete(0, tk.END); self.insert(0, path)
 
 class NormalizerApp(TkinterDnD.Tk):
-    """The main GUI application window."""
     def __init__(self):
         super().__init__()
         self.protocol("WM_DELETE_WINDOW", self.destroy)
@@ -270,22 +253,18 @@ class NormalizerApp(TkinterDnD.Tk):
         self._create_path_entry_row(config_frame, "Input Folder:", 0, self.input_folder_var, True)
         self._create_path_entry_row(config_frame, "Output Folder:", 1, self.output_folder_var, True)
         self._create_path_entry_row(config_frame, "Rules CSV:", 2, self.rules_csv_path_var, False)
-        
         unmatched_frame = ttk.LabelFrame(main_frame, text="Step 2: Handling Unmatched Files", padding="10")
         unmatched_frame.pack(fill=tk.X, expand=False, pady=5); unmatched_frame.columnconfigure(1, weight=1)
         self._create_path_entry_row(unmatched_frame, "Move Unmatched To (Optional):", 0, self.unmatched_folder_var, True)
-        
         fallback_frame = ttk.LabelFrame(main_frame, text="Step 3: Fallback Settings (for unmatched files)", padding="10")
         fallback_frame.pack(fill=tk.X, expand=False, pady=5)
         self._create_fallback_widgets(fallback_frame)
-
         action_frame = ttk.LabelFrame(main_frame, text="Step 4: Process Files", padding="10")
         action_frame.pack(fill=tk.X, expand=False, pady=5)
         self.progress = ttk.Progressbar(action_frame, orient='horizontal', mode='determinate')
         self.progress.pack(fill=tk.X, expand=True, pady=5)
         self.start_button = ttk.Button(action_frame, text="Start Processing", command=self._start_processing_clicked, style="Accent.TButton")
         self.start_button.pack(pady=5); ttk.Style(self).configure("Accent.TButton", font=("Segoe UI", 10, "bold"))
-
         log_frame = ttk.LabelFrame(main_frame, text="Logs", padding="10")
         log_frame.pack(fill=tk.BOTH, expand=True, pady=5)
         self.log_text = scrolledtext.ScrolledText(log_frame, state='disabled', height=10, wrap=tk.WORD, bg="#f0f0f0")
@@ -293,12 +272,9 @@ class NormalizerApp(TkinterDnD.Tk):
         
     def _create_fallback_widgets(self, parent: ttk.Frame):
         parent.columnconfigure(1, weight=1); parent.columnconfigure(3, weight=1)
-        self.fallback_lufs_var = tk.DoubleVar(value=-14.0)
-        self.fallback_spectral_var = tk.BooleanVar(value=True)
-        self.fallback_lowcut_var = tk.DoubleVar(value=80.0)
-        self.fallback_highcut_var = tk.DoubleVar(value=12000.0)
-        self.fallback_gate_thresh_var = tk.DoubleVar(value=-50.0)
-        self.fallback_exp_ratio_var = tk.DoubleVar(value=0.1)
+        self.fallback_lufs_var = tk.DoubleVar(value=-14.0); self.fallback_spectral_var = tk.BooleanVar(value=True)
+        self.fallback_lowcut_var = tk.DoubleVar(value=80.0); self.fallback_highcut_var = tk.DoubleVar(value=12000.0)
+        self.fallback_gate_thresh_var = tk.DoubleVar(value=-50.0); self.fallback_exp_ratio_var = tk.DoubleVar(value=0.1)
         ttk.Label(parent, text="Fallback LUFS:").grid(row=0, column=0, sticky='w', padx=5, pady=3)
         ttk.Spinbox(parent, from_=-40.0, to=0.0, increment=0.5, textvariable=self.fallback_lufs_var, width=10).grid(row=0, column=1, sticky='ew', padx=5)
         ttk.Checkbutton(parent, text="Use Spectral Matching", variable=self.fallback_spectral_var).grid(row=0, column=2, columnspan=2, sticky='w', padx=20)
@@ -358,7 +334,6 @@ class NormalizerApp(TkinterDnD.Tk):
                 basename = os.path.basename(audio_file)
                 norm_config = self.rule_manager.get_rule_for_filename(basename)
                 if norm_config:
-                    logger.info(f"--- Processing '{basename}' with matched rule ---")
                     if self.processor.process_file(audio_file, output_folder, norm_config): processed += 1
                     else: failed += 1
                 elif unmatched_folder:
@@ -376,7 +351,6 @@ class NormalizerApp(TkinterDnD.Tk):
             if failed > 0: parts.append(f"Failed to process or move {failed} file(s). See log for details.")
             summary = "\n".join(parts)
             logger.info(summary); self.after(0, lambda: messagebox.showinfo("Success", summary))
-
         except Exception as e:
             logger.error(f"A critical error occurred: {e}", exc_info=True)
             self.after(0, lambda: messagebox.showerror("Critical Error", f"An unexpected error occurred: {e}"))
